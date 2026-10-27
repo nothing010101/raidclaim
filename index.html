@@ -49,7 +49,7 @@ async function fetchV(){const v=await api('sign');if(v.nothing){V=v;$('vc').hidd
  V=v;$('vc').hidden=false;$('to').textContent=v.to;$('amt').textContent=(v.amount??'-')+' RAID';$('cum').textContent=(v.cumulative??'-')+' RAID';$('dl').textContent=v.deadline?new Date(v.deadline*1000).toLocaleString('id-ID'):'-';
  try{const p=await rpc('eth_call',[{to:EXPECT,data:'0xc884ef83'+acct.slice(2).padStart(64,'0')},'latest']);$('paid').textContent=fmt(p)+' RAID'}catch(e){$('paid').textContent='?'}
  return v}
-async function tick(){try{const v=await fetchV();$('st').textContent=v.nothing?'menunggu voucher…':'mengumpulkan ('+(seen+1)+' voucher digabung), cek tiap 30 dtk'}catch(e){log('Cek voucher gagal: '+(e.message||e))}refresh()}
+async function tick(){try{const v=await fetchV();$('st').textContent=v.nothing?'menunggu voucher…':'aktif, cek tiap 30 dtk; total naik '+seen+'x sejak mulai'}catch(e){log('Cek voucher gagal: '+(e.message||e))}refresh()}
 $('b3').onclick=async()=>{if(POLL){clearInterval(POLL);POLL=null;$('b3').textContent='3. Mulai kumpulkan voucher';$('st').textContent='berhenti';return}
  seen=0;V=null;log('Mulai mengumpulkan. Biarkan halaman terbuka; voucher baru otomatis digabung. Tidak ada transaksi sampai Anda tekan Claim.');
  $('vc').hidden=false;$('b3').textContent='Berhenti kumpulkan';await tick();POLL=setInterval(tick,30000)};
