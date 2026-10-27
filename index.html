@@ -18,15 +18,16 @@ a{color:#f5b301}.muted{color:#999;font-size:13px}
 </div>
 <button id="b1">1. Connect wallet</button>
 <button id="b2" disabled>2. Login game (tanda tangan gratis)</button>
-<button id="b3" disabled>3. Cek voucher claim</button>
+<button id="b3" disabled>3. Mulai kumpulkan voucher</button>
 <div class="card" id="vc" hidden>
   <div class="row"><span>Kontrak</span><span id="to">-</span></div>
-  <div class="row"><span>Bisa di-claim sekarang</span><span id="amt">-</span></div>
+  <div class="row"><span>Status</span><span id="st">-</span></div>
+  <div class="row"><span>Terkumpul, siap di-claim sekaligus</span><span id="amt">-</span></div>
   <div class="row"><span>Total kumulatif voucher</span><span id="cum">-</span></div>
   <div class="row"><span>Sudah di-claim on-chain</span><span id="paid">-</span></div>
   <div class="row"><span>Voucher berlaku sampai</span><span id="dl">-</span></div>
 </div>
-<button id="b4" disabled>4. Claim</button>
+<button id="b4" disabled>4. Claim semua sekaligus</button>
 <div class="card"><div id="log"></div></div>
 <script>
 const CHAIN='0x1237', EXPECT='0x05a3a6c50edb78ba65cb70ccc4b40f7426f0ecdf', RPC='https://rpc.mainnet.chain.robinhood.com', EXP='https://robin.etherscan.io';
@@ -39,14 +40,20 @@ async function onChain(){try{await eth.request({method:'wallet_switchEthereumCha
 function refresh(){$('w').textContent=acct?acct.slice(0,6)+'…'+acct.slice(-4):'-';const ok=token&&acct&&tokenFor===acct.toLowerCase();$('auth').textContent=ok?'sudah':'belum';$('b2').disabled=!acct;$('b3').disabled=!ok;$('b4').disabled=!(ok&&V&&!V.nothing)}
 $('b1').onclick=async()=>{try{if(!eth)return log('Wallet tidak terdeteksi. Buka link ini di browser dalam aplikasi wallet.');[acct]=await eth.request({method:'eth_requestAccounts'});acct=acct.toLowerCase();await onChain();log('Terhubung: '+acct);eth.on&&eth.on('accountsChanged',a=>{acct=(a[0]||'').toLowerCase()||null;V=null;refresh()})}catch(e){log('Gagal connect: '+(e.message||e))}refresh()};
 $('b2').onclick=async()=>{try{await onChain().catch(()=>{});log('Minta pesan login…');const {message}=await api('nonce',{wallet:acct});log('Setujui tanda tangan di wallet (gratis, bukan transaksi).');const signature=await eth.request({method:'personal_sign',params:[message,acct]});const r=await api('verify',{wallet:acct,signature});token=r.token;tokenFor=acct;sessionStorage.setItem('rl_token',token);sessionStorage.setItem('rl_token_for',acct);log('Login game berhasil.')}catch(e){log('Login gagal: '+(e.code===4001?'dibatalkan':e.message||e))}refresh()};
-$('b3').onclick=async()=>{try{log('Ambil voucher…');V=await api('sign');if(V.nothing){log('Server: tidak ada yang bisa di-claim saat ini.');$('vc').hidden=true;return refresh()}
- if(String(V.wallet).toLowerCase()!==acct)throw new Error('Voucher untuk wallet lain: '+V.wallet);
- if(String(V.to).toLowerCase()!==EXPECT)throw new Error('Kontrak voucher tidak dikenal: '+V.to+' (berhenti demi keamanan)');
- if(!String(V.data).startsWith('0x2ada8a32'))throw new Error('Data voucher bukan fungsi claim');
- $('vc').hidden=false;$('to').textContent=V.to;$('amt').textContent=(V.amount??'-')+' RAID';$('cum').textContent=(V.cumulative??'-')+' RAID';$('dl').textContent=V.deadline?new Date(V.deadline*1000).toLocaleString('id-ID'):'-';
+let POLL=null, seen=0;
+async function fetchV(){const v=await api('sign');if(v.nothing){V=v;$('vc').hidden=true;return v}
+ if(String(v.wallet).toLowerCase()!==acct)throw new Error('Voucher untuk wallet lain: '+v.wallet);
+ if(String(v.to).toLowerCase()!==EXPECT)throw new Error('Kontrak voucher tidak dikenal: '+v.to+' (berhenti demi keamanan)');
+ if(!String(v.data).startsWith('0x2ada8a32'))throw new Error('Data voucher bukan fungsi claim');
+ if(V&&!V.nothing&&+v.cumulative>+V.cumulative+1e-9){seen++;log('Voucher baru masuk, digabung. Total sekarang '+v.amount+' RAID.')}
+ V=v;$('vc').hidden=false;$('to').textContent=v.to;$('amt').textContent=(v.amount??'-')+' RAID';$('cum').textContent=(v.cumulative??'-')+' RAID';$('dl').textContent=v.deadline?new Date(v.deadline*1000).toLocaleString('id-ID'):'-';
  try{const p=await rpc('eth_call',[{to:EXPECT,data:'0xc884ef83'+acct.slice(2).padStart(64,'0')},'latest']);$('paid').textContent=fmt(p)+' RAID'}catch(e){$('paid').textContent='?'}
- log('Voucher siap: '+V.amount+' RAID (kumulatif '+V.cumulative+').')}catch(e){V=null;log('Gagal voucher: '+(e.message||e))}refresh()};
-$('b4').onclick=async()=>{try{await onChain();log('Simulasi dulu…');try{await rpc('eth_call',[{from:acct,to:V.to,data:V.data},'latest'])}catch(e){const d=String(e.data||'');if(d.startsWith('0x969bf728'))return log('Sudah di-claim (NothingToClaim).');if(d.startsWith('0x203d82d8'))return log('Voucher kedaluwarsa, tekan langkah 3 lagi.');log('Peringatan simulasi: '+e.message+' '+d)}
+ return v}
+async function tick(){try{const v=await fetchV();$('st').textContent=v.nothing?'menunggu voucher…':'mengumpulkan ('+(seen+1)+' voucher digabung), cek tiap 30 dtk'}catch(e){log('Cek voucher gagal: '+(e.message||e))}refresh()}
+$('b3').onclick=async()=>{if(POLL){clearInterval(POLL);POLL=null;$('b3').textContent='3. Mulai kumpulkan voucher';$('st').textContent='berhenti';return}
+ seen=0;V=null;log('Mulai mengumpulkan. Biarkan halaman terbuka; voucher baru otomatis digabung. Tidak ada transaksi sampai Anda tekan Claim.');
+ $('vc').hidden=false;$('b3').textContent='Berhenti kumpulkan';await tick();POLL=setInterval(tick,30000)};
+$('b4').onclick=async()=>{try{if(POLL){clearInterval(POLL);POLL=null;$('b3').textContent='3. Mulai kumpulkan voucher'}await onChain();log('Ambil voucher terbaru (sudah mencakup semua)…');const v=await fetchV();if(v.nothing){log('Tidak ada yang bisa di-claim.');return refresh()}log('Claim sekaligus: '+v.amount+' RAID.');log('Simulasi dulu…');try{await rpc('eth_call',[{from:acct,to:V.to,data:V.data},'latest'])}catch(e){const d=String(e.data||'');if(d.startsWith('0x969bf728'))return log('Sudah di-claim (NothingToClaim).');if(d.startsWith('0x203d82d8'))return log('Voucher kedaluwarsa, tekan Claim lagi.');log('Peringatan simulasi: '+e.message+' '+d)}
  log('Konfirmasi transaksi di wallet…');const h=await eth.request({method:'eth_sendTransaction',params:[{from:acct,to:V.to,data:V.data,value:'0x0'}]});log('Terkirim: '+EXP+'/tx/'+h);
  for(let i=0;i<40;i++){await new Promise(z=>setTimeout(z,3000));const r=await rpc('eth_getTransactionReceipt',[h]).catch(()=>null);if(r){log(r.status==='0x1'?'BERHASIL di-claim.':'Transaksi gagal (revert).');break}}V=null}catch(e){log('Claim gagal: '+(e.code===4001?'dibatalkan':e.message||e))}refresh()};
 refresh();
